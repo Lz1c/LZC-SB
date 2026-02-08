@@ -1,0 +1,78 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &1571890129274118218
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 8853319733001033253}
+  - component: {fileID: 124251364444327783}
+  - component: {fileID: 9110816259581256041}
+  m_Layer: 0
+  m_Name: "\u7206\u70B8"
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &8853319733001033253
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1571890129274118218}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &124251364444327783
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1571890129274118218}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 397730aeff21c84439432fffdcc847c4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  perkId: 
+  perkTier: 1
+  requiredPerkIds: []
+--- !u!114 &9110816259581256041
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1571890129274118218}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 50b32041bac709649afc804f21837af0, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  radius: 2.5
+  damageMultiplier: 0.35
+  flatBonusDamage: 1
+  excludeDirectTarget: 1
+  enemyMask:
+    serializedVersion: 2
+    m_Bits: 128
+  explosionVfxPrefab: {fileID: 356964474686017244, guid: 0ae76b2d57ad46244951a5809e0c7e23,
+    type: 3}
+  vfxParent: {fileID: 0}
+  vfxAutoDestroySeconds: 1
+  scaleVfxByRadius: 1
+  vfxUseDiameter: 1
+  vfxScalePerUnit: 0.5
+  disableIfNotAllowed: 0
+  requirePrerequisites: 1

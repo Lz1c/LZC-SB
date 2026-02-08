@@ -87,6 +87,10 @@ public sealed class PerkManager : MonoBehaviour
 
     public event Action RefsRefreshed;
 
+    // New: fires whenever perk list content changes (count/order/instances)
+    public event Action<int> PerksChangedForGun; // 0 = GunA, 1 = GunB
+    public event Action PerksChangedAny;
+
     public GameObject GunAObject => gun1;
     public GameObject GunBObject => gun2;
     public GameObject GunControlRoot => gunControlRoot;
@@ -96,6 +100,8 @@ public sealed class PerkManager : MonoBehaviour
     public ControlRefs Control => controlRefs;
 
     private int _lastSignature;
+    private int _lastPerkSigA;
+    private int _lastPerkSigB;
 
     private void Awake()
     {
@@ -130,6 +136,32 @@ public sealed class PerkManager : MonoBehaviour
             h = h * 31 + (gunControlRoot != null ? gunControlRoot.GetInstanceID() : 0);
             h = h * 31 + (autoRefreshInPlayMode ? 1 : 0);
             h = h * 31 + (preferChildNameForGunSearch != null ? preferChildNameForGunSearch.GetHashCode() : 0);
+
+            // New: include perk list signatures so inspector/runtime list edits trigger refresh
+            h = h * 31 + ComputePerkListSignature(selectedPerksGunA);
+            h = h * 31 + ComputePerkListSignature(selectedPerksGunB);
+
+            return h;
+        }
+    }
+
+    private static int ComputePerkListSignature(List<MonoBehaviour> list)
+    {
+        unchecked
+        {
+            int h = 23;
+            if (list == null) return h;
+
+            h = h * 31 + list.Count;
+            for (int i = 0; i < list.Count; i++)
+            {
+                var mb = list[i];
+                h = h * 31 + (mb != null ? mb.GetInstanceID() : 0);
+
+                // Optional: also include type hash for extra safety if references get swapped
+                h = h * 31 + (mb != null ? mb.GetType().GetHashCode() : 0);
+            }
+
             return h;
         }
     }
@@ -143,8 +175,29 @@ public sealed class PerkManager : MonoBehaviour
 
         RefreshControlRefs(gunControlRoot, controlRefs, force);
 
+        // New: detect perk changes and fire events / update state
+        RefreshPerkState(force);
+
         _lastSignature = ComputeSignature();
         RefsRefreshed?.Invoke();
+    }
+
+    private void RefreshPerkState(bool force)
+    {
+        int sigA = ComputePerkListSignature(selectedPerksGunA);
+        int sigB = ComputePerkListSignature(selectedPerksGunB);
+
+        bool changedA = force || sigA != _lastPerkSigA;
+        bool changedB = force || sigB != _lastPerkSigB;
+
+        if (!changedA && !changedB) return;
+
+        _lastPerkSigA = sigA;
+        _lastPerkSigB = sigB;
+
+        if (changedA) PerksChangedForGun?.Invoke(0);
+        if (changedB) PerksChangedForGun?.Invoke(1);
+        PerksChangedAny?.Invoke();
     }
 
     private static void RefreshGunRefs(GameObject gunObj, GunRefs refs, bool force, string preferChildName)
@@ -299,19 +352,10 @@ public sealed class PerkManager : MonoBehaviour
             var id = req[i];
             if (string.IsNullOrWhiteSpace(id)) continue;
 
-            // By default: prerequisites are checked within the same gun list
             if (!HasPerk(id, gunIndex)) return false;
         }
 
         return true;
-    }
-
-    private static string GetPerkIdFromObject(GameObject perkObject)
-    {
-        if (perkObject == null) return "";
-        var meta = perkObject.GetComponent<PerkMeta>();
-        if (meta != null) return meta.EffectiveId;
-        return perkObject.name;
     }
 
     public bool TryAddPerkInstanceToGun(MonoBehaviour perkInstance, int gunIndex)
@@ -320,28 +364,67 @@ public sealed class PerkManager : MonoBehaviour
 
         var list = GetPerkList(gunIndex);
 
-        // Dedup by perk id (meta preferred), else type name
         string id = "";
         var meta = perkInstance.GetComponent<PerkMeta>();
         if (meta != null) id = meta.EffectiveId;
         if (string.IsNullOrWhiteSpace(id)) id = perkInstance.GetType().Name;
 
         if (HasPerk(id, gunIndex)) return false;
-
         if (!PrerequisitesMet(perkInstance.gameObject, gunIndex)) return false;
 
         list.Add(perkInstance);
+
+        // New: immediate perk state refresh when API-based changes happen
+        ForcePerkStateRefresh();
+
         return true;
+    }
+
+    public bool TryRemovePerkFromGun(MonoBehaviour perkInstance, int gunIndex)
+    {
+        if (perkInstance == null) return false;
+
+        var list = GetPerkList(gunIndex);
+        bool removed = list.Remove(perkInstance);
+        if (removed) ForcePerkStateRefresh();
+        return removed;
+    }
+
+    public void ClearPerksForGun(int gunIndex)
+    {
+        var list = GetPerkList(gunIndex);
+        if (list.Count == 0) return;
+
+        list.Clear();
+        ForcePerkStateRefresh();
+    }
+
+    public void ForcePerkStateRefresh()
+    {
+        // Recompute perk sigs and fire events immediately
+        RefreshPerkState(force: true);
+
+        // Also update main signature so Update() doesn't double-trigger in the same frame
+        _lastSignature = ComputeSignature();
+
+        // Keep existing contract: listeners using RefsRefreshed will also react
+        RefsRefreshed?.Invoke();
     }
 
     public MonoBehaviour InstantiatePerkToGun(GameObject perkPrefab, int gunIndex, Transform parent)
     {
         if (perkPrefab == null) return null;
 
-        var p = parent != null ? parent : transform;
-        var inst = Instantiate(perkPrefab, p);
+        var finalParent = parent != null ? parent : transform;
 
-        // Find a perk logic component to register (first MonoBehaviour excluding PerkMeta)
+        // Staging container stays inactive so perk OnEnable won't run yet.
+        var staging = new GameObject($"__PerkStaging_{perkPrefab.name}");
+        staging.hideFlags = HideFlags.HideInHierarchy;
+        staging.transform.SetParent(finalParent, false);
+        staging.SetActive(false);
+
+        var inst = Instantiate(perkPrefab, staging.transform);
+
         var behaviours = inst.GetComponents<MonoBehaviour>();
         MonoBehaviour perkLogic = null;
 
@@ -357,25 +440,33 @@ public sealed class PerkManager : MonoBehaviour
         if (perkLogic == null)
         {
             Destroy(inst);
+            Destroy(staging);
             return null;
         }
 
-        // Optional: set a target gun index field if present (no interface required)
+        // Optional: set targetGunIndex if the perk supports it.
         var t = perkLogic.GetType();
         var field = t.GetField("targetGunIndex");
         if (field != null && field.FieldType == typeof(int))
-        {
             field.SetValue(perkLogic, gunIndex);
-        }
 
+        // Register first (while inactive)
         if (!TryAddPerkInstanceToGun(perkLogic, gunIndex))
         {
             Destroy(inst);
+            Destroy(staging);
             return null;
         }
 
+        // Move to final parent, then activate so OnEnable sees list membership.
+        inst.transform.SetParent(finalParent, false);
+        inst.SetActive(true);
+        perkLogic.enabled = true;
+
+        Destroy(staging);
         return perkLogic;
     }
+
 
     public int GetPerkTier(GameObject perkObject)
     {
