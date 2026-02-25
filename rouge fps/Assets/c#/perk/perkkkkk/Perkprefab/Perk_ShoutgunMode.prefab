@@ -9,8 +9,8 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1588541040530017109}
-  - component: {fileID: 2860339450485323529}
   - component: {fileID: 4411632862649793286}
+  - component: {fileID: 2860339450485323529}
   m_Layer: 0
   m_Name: Perk_ShoutgunMode
   m_TagString: Untagged
@@ -33,21 +33,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &2860339450485323529
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 5841294113404541868}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 397730aeff21c84439432fffdcc847c4, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  perkId: 
-  perkTier: 1
-  requiredPerkIds: []
 --- !u!114 &4411632862649793286
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -63,4 +48,19 @@ MonoBehaviour:
   pelletsPerShot: 6
   keepTotalDamageConstant: 1
   totalDamageMultiplier: 1
-  disableIfPrereqMissing: 0
+  priority: 0
+--- !u!114 &2860339450485323529
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5841294113404541868}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 397730aeff21c84439432fffdcc847c4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  perkId: 
+  perkTier: 1
+  requiredPerkIds: []

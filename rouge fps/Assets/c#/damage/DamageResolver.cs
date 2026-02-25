@@ -1,15 +1,12 @@
 using UnityEngine;
 
+/// <summary>
+/// 统一伤害结算：
+/// - 读取 hitbox 倍率（通过 HitboxMultiplierManager 计算最终倍率）
+/// - 护甲/状态/命中反馈/事件不改动
+/// </summary>
 public static class DamageResolver
 {
-    /// <summary>
-    /// Unified hit application for both raycast bullets and trigger bullets.
-    /// - Applies hitbox multiplier/headshot
-    /// - Applies armor payload if target supports IDamageableArmorEx
-    /// - Applies status payload (StatusContainer)
-    /// - Shows hit feedback UI
-    /// - Raises CombatEventHub.OnHit (and relies on MonsterHealth to raise OnKill)
-    /// </summary>
     public static bool ApplyHit(
         DamageInfo baseInfo,
         Collider hitCol,
@@ -22,7 +19,6 @@ public static class DamageResolver
     {
         if (hitCol == null) return false;
 
-        // Resolve target interfaces
         var armorEx = hitCol.GetComponentInParent<IDamageableArmorEx>();
         var dmgEx = hitCol.GetComponentInParent<IDamageableEx>();
         var dmg = hitCol.GetComponentInParent<IDamageable>();
@@ -33,11 +29,18 @@ public static class DamageResolver
         // Hitbox
         float partMult = 1f;
         bool isHeadshot = false;
+
         var hb = hitCol.GetComponent<Hitbox>();
         if (hb != null)
         {
-            partMult = Mathf.Max(0f, hb.damageMultiplier);
             isHeadshot = hb.part == Hitbox.Part.Head;
+
+            // 关键：通过 HitboxMultiplierManager 获取“最终倍率”
+            var mgr = HitboxMultiplierManager.Instance;
+            if (mgr != null)
+                partMult = mgr.ResolveMultiplier(source, hb);
+            else
+                partMult = Mathf.Max(0f, hb.damageMultiplier);
         }
 
         var info = baseInfo;
@@ -45,9 +48,9 @@ public static class DamageResolver
         info.isHeadshot = isHeadshot;
         info.hitPoint = hitPoint;
         info.hitCollider = hitCol;
-        info.damage = Mathf.Max(0f, info.damage) * partMult;
+        info.damage = Mathf.Max(0f, info.damage) * Mathf.Max(0f, partMult);
 
-        // Apply damage (armor-aware first)
+        // Apply damage
         if (armorEx != null && armorPayload != null)
         {
             ArmorHitInfo armorInfo = armorPayload.ToArmorHitInfo();
@@ -100,7 +103,7 @@ public static class DamageResolver
             if (ui != null) ui.ShowHit(isHeadshot);
         }
 
-        // Raise hit event (for perks / systems)
+        // Raise hit event
         CombatEventHub.RaiseHit(new CombatEventHub.HitEvent
         {
             source = source,
@@ -113,10 +116,8 @@ public static class DamageResolver
             isHeadshot = isHeadshot,
             time = Time.time,
             armorPayload = armorPayload,
-            statusPayload = statusPayload,
-            flags = info.flags
+            statusPayload = statusPayload
         });
-
 
         return true;
     }

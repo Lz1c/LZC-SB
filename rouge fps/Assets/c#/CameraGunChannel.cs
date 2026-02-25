@@ -38,82 +38,19 @@ public class CameraGunChannel : MonoBehaviour
     [Min(0f)] public float bulletGravity = 0f;
     [Min(0.01f)] public float bulletLifetime = 3f;
 
+    [Header("Projectile Damage Falloff（实体子弹专用）")]
+    [Min(0f)]
+    [Tooltip("实体子弹从多少米开始线性衰减伤害：\n- <=该距离：满伤害\n- 到 maxRange：衰减到 0\n注意：只对 Projectile 生效，Hitscan 仍使用下方曲线。")]
+    public float projectileFalloffStartMeters = 0f;
+
     [Header("Damage")]
     [Min(0f)] public float baseDamage = 10f;
+
+    [Tooltip("仅对 Hitscan 生效（FireHitscan 使用该曲线）。Projectile 已改为使用 projectileFalloffStartMeters 线性衰减。")]
     public AnimationCurve damageFalloffByDistance01 = AnimationCurve.Linear(0f, 1f, 1f, 1f);
 
     [Header("Hit")]
     public LayerMask hitMask = ~0;
-
-    // ------------------------------------------------------------
-    // Runtime Stat Stacking (Flat + Additive + Multiplicative)
-    // D = (D0 + flat) * (1 + addPct) * mul
-    // Note: D0 here is the CURRENT inspector field value (baseDamage/fireRate/etc),
-    // so existing perks that directly modify those fields remain compatible.
-    // ------------------------------------------------------------
-    [Header("Runtime Stat Stacking (Optional)")]
-    [Tooltip("If enabled, final runtime stats use: (base + flat) * (1 + addPct) * mul.")]
-    [SerializeField] private bool enableRuntimeStacking = true;
-
-    [Header("Damage Stack")]
-    public float damageFlat = 0f;
-    [Tooltip("0.2 = +20%")]
-    public float damageAddPct = 0f;
-    [Tooltip("1.5 = x1.5")]
-    public float damageMul = 1f;
-
-    [Header("FireRate Stack")]
-    public float fireRateFlat = 0f;
-    [Tooltip("0.2 = +20%")]
-    public float fireRateAddPct = 0f;
-    [Tooltip("1.5 = x1.5")]
-    public float fireRateMul = 1f;
-
-    [Header("BulletSpeed Stack")]
-    public float bulletSpeedFlat = 0f;
-    [Tooltip("0.2 = +20%")]
-    public float bulletSpeedAddPct = 0f;
-    [Tooltip("1.5 = x1.5")]
-    public float bulletSpeedMul = 1f;
-
-    [Header("MaxRange Stack")]
-    public float maxRangeFlat = 0f;
-    [Tooltip("0.2 = +20%")]
-    public float maxRangeAddPct = 0f;
-    [Tooltip("1.5 = x1.5")]
-    public float maxRangeMul = 1f;
-
-    // Helper API for perks (optional to use)
-    public void ResetRuntimeStacks()
-    {
-        damageFlat = 0f; damageAddPct = 0f; damageMul = 1f;
-        fireRateFlat = 0f; fireRateAddPct = 0f; fireRateMul = 1f;
-        bulletSpeedFlat = 0f; bulletSpeedAddPct = 0f; bulletSpeedMul = 1f;
-        maxRangeFlat = 0f; maxRangeAddPct = 0f; maxRangeMul = 1f;
-    }
-
-    private float EvalStack(float baseValue, float flat, float addPct, float mul, float minValue)
-    {
-        // guard mul
-        if (mul <= 0f) mul = 1f;
-        float v = (baseValue + flat) * (1f + addPct) * mul;
-        if (v < minValue) v = minValue;
-        return v;
-    }
-
-    private float RuntimeDamage =>
-        enableRuntimeStacking ? EvalStack(baseDamage, damageFlat, damageAddPct, damageMul, 0f) : baseDamage;
-
-    private float RuntimeFireRate =>
-        enableRuntimeStacking ? EvalStack(fireRate, fireRateFlat, fireRateAddPct, fireRateMul, 0.01f) : Mathf.Max(0.01f, fireRate);
-
-    private float RuntimeBulletSpeed =>
-        enableRuntimeStacking ? EvalStack(bulletSpeed, bulletSpeedFlat, bulletSpeedAddPct, bulletSpeedMul, 0.01f) : Mathf.Max(0.01f, bulletSpeed);
-
-    private float RuntimeMaxRange =>
-        enableRuntimeStacking ? EvalStack(maxRange, maxRangeFlat, maxRangeAddPct, maxRangeMul, 0f) : maxRange;
-
-    // ------------------------------------------------------------
 
     public System.Action<CameraGunChannel> OnShot;
 
@@ -169,32 +106,38 @@ public class CameraGunChannel : MonoBehaviour
     {
         if (!HasValidSetup()) return;
 
-        // Block ALL firing during uninterruptible magazine stage
+        // 弹匣换弹不可中断阶段：完全禁止开火
         if (_dual != null && _dual.ShouldBlockFiring())
             return;
 
-        // wantsFire MUST be decided by Dual so semi can preempt auto in exclusive mode
+        // 是否想开火：交由 Dual 决定，保证半自动能抢占自动
         bool wantsFire = (_dual != null)
             ? _dual.GetWantsFire(this)
             : (fireMode == FireMode.Auto ? Input.GetKey(fireKey) : Input.GetKeyDown(fireKey));
 
         if (!wantsFire) return;
 
+        // 半自动：只用 semiFireCooldown 限制，不受 fireRate/_nextFireTime 影响
         if (fireMode == FireMode.Semi && semiFireCooldown > 0f)
         {
             if (Time.time < _nextSemiAllowedTime) return;
         }
 
-        // If per-bullet reload is active, firing should interrupt it (magazine never interruptible)
+        // 遂发填弹进行中：开火会中断遂发填弹（弹匣阶段不可中断）
         if (_dual != null)
             _dual.InterruptPerBulletReloadForFire();
 
         if (ammo.IsReloading && ammo.IsUninterruptible) return;
-        if (Time.time < _nextFireTime) return;
+
+        // 自动：受 fireRate 限制
+        if (fireMode == FireMode.Auto)
+        {
+            if (Time.time < _nextFireTime) return;
+        }
 
         if (!ammo.HasAmmoInMag())
         {
-            // Auto reload is handled by Dual (empty -> release -> wait)
+            // 自动换弹由 Dual 处理
             return;
         }
 
@@ -206,7 +149,9 @@ public class CameraGunChannel : MonoBehaviour
         recoil.Kick();
         spread.OnShotFired();
 
-        int shots = (shotType == ShotType.Shotgun) ? pelletsPerShot : 1;
+        // ===================== 关键改动 1：霰弹枪弹丸数量走“最终倍率” =====================
+        // 这样 Perk 的“弹丸数量 /2”可以作为开火瞬间最后一步生效（等价最高优先级）
+        int shots = (shotType == ShotType.Shotgun) ? GetFinalPelletsPerShot() : 1;
         bool isShotgun = (shotType == ShotType.Shotgun);
 
         for (int i = 0; i < shots; i++)
@@ -224,10 +169,11 @@ public class CameraGunChannel : MonoBehaviour
                 FireProjectile(dir);
         }
 
-        // Use runtime fire rate (supports additive stacking)
-        _nextFireTime = Time.time + (1f / RuntimeFireRate);
+        // 自动：冷却按最终 fireRate 计算（GunStatContext 会回写）
+        if (fireMode == FireMode.Auto)
+            _nextFireTime = Time.time + (1f / Mathf.Max(0.01f, fireRate));
 
-        // Fire event: pellets should be the actual count fired this trigger
+        // Fire 事件：pellets 是本次真实发射数量
         CombatEventHub.RaiseFire(new CombatEventHub.FireEvent
         {
             source = this,
@@ -236,41 +182,59 @@ public class CameraGunChannel : MonoBehaviour
             time = Time.time
         });
 
+        // 半自动：只受 semiFireCooldown 限制
         if (fireMode == FireMode.Semi && semiFireCooldown > 0f)
             _nextSemiAllowedTime = Time.time + semiFireCooldown;
+    }
+
+    /// <summary>
+    /// 获取本次开火的“最终弹丸数”
+    /// - 在开火瞬间读取倍率，保证效果永远在所有其它修改之后生效
+    /// - 例如 Perk：弹丸数量/2 => mul=0.5
+    /// </summary>
+    public int GetFinalPelletsPerShot()
+    {
+        int basePellets = Mathf.Max(1, pelletsPerShot);
+
+        // 注意：你需要在项目里有 PelletCountMultiplierRegistry（我之前给你的注册表脚本）
+        float mul = PelletCountMultiplierRegistry.GetFinalMultiplier(this);
+
+        // 使用 Floor：更符合“/2”的直觉（7 -> 3），并且永远保底 1
+        int finalPellets = Mathf.FloorToInt(basePellets * mul + 0.0001f);
+        return Mathf.Max(1, finalPellets);
     }
 
     private void FireHitscan(Vector3 dir)
     {
         Ray ray = new Ray(firePoint.position, dir);
 
-        if (Physics.Raycast(ray, out RaycastHit hit, RuntimeMaxRange, hitMask, QueryTriggerInteraction.Ignore))
+        if (Physics.Raycast(ray, out RaycastHit hit, maxRange, hitMask, QueryTriggerInteraction.Ignore))
         {
-            float mr = RuntimeMaxRange;
+            // Hitscan：用曲线做衰减（保持你原来的算法）
+            float mr = maxRange;
             float t01 = mr <= 0.0001f ? 1f : Mathf.Clamp01(hit.distance / mr);
             float mult = Mathf.Max(0f, damageFalloffByDistance01.Evaluate(t01));
-            float finalDamage = RuntimeDamage * mult;
+            float finalDamage = baseDamage * mult;
 
-            Hitbox hb = hit.collider.GetComponent<Hitbox>();
-            bool isHead = hb != null && hb.part == Hitbox.Part.Head;
+            // ===================== 关键改动 2：命中结算走 DamageResolver =====================
+            // 目的：让 HitboxMultiplierManager 可以在当次命中就影响倍率（包括你要的“爆头倍率 add pct”）
+            // 同时保留护甲、状态、事件、UI 等统一链路
+            var armorPayload = GetComponentInChildren<BulletArmorPayload>(true);
+            var statusPayload = GetComponentInChildren<BulletStatusPayload>(true);
 
-            var dmgEx = hit.collider.GetComponentInParent<IDamageableEx>();
-            if (dmgEx != null)
-            {
-                dmgEx.TakeDamage(new DamageInfo
+            DamageResolver.ApplyHit(
+                baseInfo: new DamageInfo
                 {
                     source = this,
-                    damage = finalDamage,
-                    isHeadshot = isHead,
-                    hitPoint = hit.point,
-                    hitCollider = hit.collider
-                });
-            }
-            else
-            {
-                IDamageable dmg = hit.collider.GetComponentInParent<IDamageable>();
-                if (dmg != null) dmg.TakeDamage(finalDamage);
-            }
+                    damage = finalDamage
+                },
+                hitCol: hit.collider,
+                hitPoint: hit.point,
+                source: this,
+                armorPayload: armorPayload,
+                statusPayload: statusPayload,
+                showHitUI: true
+            );
         }
     }
 
@@ -278,42 +242,48 @@ public class CameraGunChannel : MonoBehaviour
     {
         if (projectilePrefab == null) return;
 
-        // 1) spawn projectile
+        // 1) 生成实体子弹
         BulletProjectile p = Instantiate(projectilePrefab, firePoint.position, Quaternion.LookRotation(dir));
         p.gameObject.SetActive(true);
 
-        // 2) if projectile has BulletHitDamage, assign source + runtime damage
+        // 2) 如果子弹上挂了 BulletHitDamage（兼容你现有逻辑）
         var hitDamage = p.GetComponentInChildren<BulletHitDamage>(true);
         if (hitDamage != null)
         {
             hitDamage.source = this;
-            hitDamage.baseDamage = RuntimeDamage;
-            hitDamage.Init(RuntimeDamage, this);
+            hitDamage.baseDamage = baseDamage;
+
+            // 保持你现有 API 行为
+            hitDamage.Init(baseDamage, this);
         }
 
-        // 3) optional: ensure visible
+        // 3) 确保可见
         var r = p.GetComponentInChildren<Renderer>();
         if (r != null) r.enabled = true;
 
-        // 4) init config with runtime stats
+        // 4) 初始化子弹配置
+        // 注意：Projectile 的伤害衰减已经改为“从 projectileFalloffStartMeters 开始线性衰减到 maxRange”
+        // 不再使用 damageFalloffByDistance01 曲线
         p.Init(new BulletProjectile.Config
         {
             source = this,
 
-            speed = RuntimeBulletSpeed,
+            speed = Mathf.Max(0.01f, bulletSpeed),
             gravity = bulletGravity,
             lifetime = bulletLifetime,
-            maxRange = RuntimeMaxRange,
-            baseDamage = RuntimeDamage,
-            falloff = damageFalloffByDistance01,
+
+            maxRange = maxRange,
+            baseDamage = baseDamage,
+
+            falloffStartMeters = projectileFalloffStartMeters,
+
             hitMask = hitMask
         });
     }
 
     public void FireBonusPellets(int pellets)
     {
-        // Bonus shots should not consume cooldown / trigger OnFire again.
-        // They reuse the current spread sampling and ballistic mode.
+        // 额外子弹不消耗冷却，也不再次触发 OnShot
         if (!HasValidSetup()) return;
         if (pellets <= 0) return;
 
@@ -360,7 +330,7 @@ public class CameraGunChannel : MonoBehaviour
     {
         if (ammo == null) return;
 
-        // prevent double subscribe
+        // 防止重复订阅
         ammo.OnReloadStart -= HandleReloadStart;
         ammo.OnReloadEnd -= HandleReloadEnd;
 
@@ -393,6 +363,36 @@ public class CameraGunChannel : MonoBehaviour
             isStart = false,
             time = Time.time
         });
+    }
+
+    // ========== FireMode 变化通知 + 立即刷新（新增） ==========
+
+    /// <summary>
+    /// 当 fireMode 被切换时触发（使用 SetFireMode 才会触发）
+    /// </summary>
+    public System.Action<CameraGunChannel, FireMode, FireMode> OnFireModeChanged;
+
+    /// <summary>
+    /// 推荐：所有地方切换开火模式都用这个方法
+    /// - 会触发 OnFireModeChanged
+    /// - 会让 GunStatContext 立刻刷新（可选）
+    /// </summary>
+    public void SetFireMode(FireMode newMode, bool forceRebuildNow = true)
+    {
+        if (fireMode == newMode) return;
+
+        FireMode prev = fireMode;
+        fireMode = newMode;
+
+        OnFireModeChanged?.Invoke(this, prev, newMode);
+
+        var ctx = GetComponent<GunStatContext>();
+        if (ctx == null) ctx = GetComponentInParent<GunStatContext>();
+        if (ctx != null)
+        {
+            if (forceRebuildNow) ctx.ForceRebuildNow();
+            else ctx.MarkDirty();
+        }
     }
 }
 

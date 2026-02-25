@@ -6,6 +6,10 @@ public class MarkManager : MonoBehaviour
     [Header("Config")]
     public MarkConfig config;
 
+    [Header("Activation")]
+    [Tooltip("If false, MarkManager will ignore all events (no apply, no detonate). Enable it from a perk.")]
+    public bool systemEnabled = false;
+
     [Header("Enemy Mask (for optional jump)")]
     public LayerMask enemyMask = ~0;
 
@@ -23,6 +27,7 @@ public class MarkManager : MonoBehaviour
 
     private void HandleHit(CombatEventHub.HitEvent e)
     {
+        if (!systemEnabled) return;
         if (config == null) return;
         if (e.source == null || e.target == null) return;
 
@@ -63,24 +68,31 @@ public class MarkManager : MonoBehaviour
             }
 
             if (config.consumeOnDetonate)
+            {
+                // Consume the runtime MarkStatus component
                 mark.Consume();
 
-            // Optional: if you want mark-status removed immediately on consume,
-            // you can add StatusContainer.RemoveStatus and call it here.
+                // Also remove the StatusContainer Mark entry immediately (for debug & perk queries)
+                var sc = e.target.GetComponent<StatusContainer>();
+                if (sc == null) sc = e.target.GetComponentInParent<StatusContainer>();
+                if (sc != null) sc.RemoveStatus(StatusType.Mark);
+            }
+
             return;
         }
     }
 
     private void HandleKill(CombatEventHub.KillEvent e)
     {
+        if (!systemEnabled) return;
         if (config == null) return;
         if (!config.jumpMarkOnKill) return;
         if (e.target == null) return;
 
         var mark = GetMark(e.target);
-        if (mark == null) return;
+        if (mark == null || !mark.IsActive) return;
 
-        GameObject next = FindRandomEnemy(exclude: e.target);
+        GameObject next = FindRandomEnemy(exclude: e.target, origin: e.target.transform.position);
         if (next == null) return;
 
         if (e.source != null)
@@ -89,6 +101,7 @@ public class MarkManager : MonoBehaviour
 
     private void ApplyOrRefreshMark(GameObject target, CameraGunChannel applierGun)
     {
+        if (!systemEnabled) return;
         if (target == null || applierGun == null || config == null) return;
 
         var mark = target.GetComponent<MarkStatus>();
@@ -121,6 +134,7 @@ public class MarkManager : MonoBehaviour
 
     private void ShareStatusesFromMarkedTarget(GameObject markedTarget)
     {
+        if (!systemEnabled) return;
         if (markedTarget == null) return;
 
         var src = markedTarget.GetComponent<StatusContainer>();
@@ -156,23 +170,29 @@ public class MarkManager : MonoBehaviour
         StatusSnapshotPool.Release(snaps);
     }
 
-    private GameObject FindRandomEnemy(GameObject exclude)
+    private GameObject FindRandomEnemy(GameObject exclude, Vector3 origin)
     {
-        var enemies = FindObjectsByType<MonsterHealth>(FindObjectsSortMode.None);
-        if (enemies == null || enemies.Length == 0) return null;
+        int limit = Mathf.Max(1, config != null ? config.jumpSearchLimit : 1);
 
-        int limit = Mathf.Max(1, config.jumpSearchLimit);
-        List<GameObject> candidates = new List<GameObject>(Mathf.Min(16, limit));
+        // Prefer physics overlap by mask (cheaper & respects enemyMask)
+        var hits = Physics.OverlapSphere(origin, 50f, enemyMask, QueryTriggerInteraction.Ignore);
+        if (hits == null || hits.Length == 0) return null;
 
-        for (int i = 0; i < enemies.Length && candidates.Count < limit; i++)
+        List<GameObject> candidates = new List<GameObject>(Mathf.Min(16, Mathf.Min(limit, hits.Length)));
+
+        for (int i = 0; i < hits.Length && candidates.Count < limit; i++)
         {
-            var mh = enemies[i];
+            var col = hits[i];
+            if (col == null) continue;
+
+            var mh = col.GetComponentInParent<MonsterHealth>();
             if (mh == null || mh.IsDead) continue;
 
-            GameObject go = mh.gameObject;
+            var go = mh.gameObject;
             if (exclude != null && go == exclude) continue;
 
-            candidates.Add(go);
+            if (!candidates.Contains(go))
+                candidates.Add(go);
         }
 
         if (candidates.Count == 0) return null;

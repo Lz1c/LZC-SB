@@ -17,11 +17,14 @@ public class SpreadDiamondUI : MonoBehaviour
     public RectTransform right;
 
     [Header("Scale")]
-    public float pixelsPerDegree = 6f;
-    public float maxPixels = 250f;
+    public float pixelsPerDegreeX = 6f;
+    public float pixelsPerDegreeY = 6f;
+    public float maxPixelsX = 250f;
+    public float maxPixelsY = 250f;
     public float smooth = 20f;
 
-    private float _uiRadius;
+    private float _uiRadiusX;
+    private float _uiRadiusY;
 
     private void Awake()
     {
@@ -36,15 +39,22 @@ public class SpreadDiamondUI : MonoBehaviour
         if (ch == null || ch.spread == null) return;
 
         bool isShotgun = ch.shotType == CameraGunChannel.ShotType.Shotgun;
-        float spreadDeg = ch.spread.CurrentMaxDiamondSpread(isShotgun);
 
-        float targetRadius = Mathf.Min(maxPixels, spreadDeg * pixelsPerDegree);
-        _uiRadius = Mathf.Lerp(_uiRadius, targetRadius, 1f - Mathf.Exp(-smooth * Time.deltaTime));
+        // NEW: read anisotropic UI spread values
+        float spreadXDeg = ch.spread.GetUiSpreadXDeg(isShotgun);
+        float spreadYDeg = ch.spread.GetUiSpreadYDeg(isShotgun);
 
-        if (top != null) top.anchoredPosition = new Vector2(0f, _uiRadius);
-        if (bottom != null) bottom.anchoredPosition = new Vector2(0f, -_uiRadius);
-        if (left != null) left.anchoredPosition = new Vector2(-_uiRadius, 0f);
-        if (right != null) right.anchoredPosition = new Vector2(_uiRadius, 0f);
+        float targetX = Mathf.Min(maxPixelsX, spreadXDeg * pixelsPerDegreeX);
+        float targetY = Mathf.Min(maxPixelsY, spreadYDeg * pixelsPerDegreeY);
+
+        float t = 1f - Mathf.Exp(-smooth * Time.deltaTime);
+        _uiRadiusX = Mathf.Lerp(_uiRadiusX, targetX, t);
+        _uiRadiusY = Mathf.Lerp(_uiRadiusY, targetY, t);
+
+        if (top != null) top.anchoredPosition = new Vector2(0f, _uiRadiusY);
+        if (bottom != null) bottom.anchoredPosition = new Vector2(0f, -_uiRadiusY);
+        if (left != null) left.anchoredPosition = new Vector2(-_uiRadiusX, 0f);
+        if (right != null) right.anchoredPosition = new Vector2(_uiRadiusX, 0f);
     }
 
     private void TryAutoWire()
