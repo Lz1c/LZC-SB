@@ -10,6 +10,47 @@ public class StatusContainer : MonoBehaviour
     public float minMoveSpeedMultiplier = 0.05f;
     public float minOutgoingDamageMultiplier = 0.10f;
 
+    // =========================
+    // 异常施加修饰器（全局）
+    // 说明：
+    // - 所有异常施加最终都会走 ApplyStatus(StatusApplyRequest)
+    // - 这里提供一个全局的修改入口，让 Perk 能统一修改 stacksToAdd 等参数
+    // - Priority 越大越先执行
+    // =========================
+    private static readonly List<IStatusApplyModifier> _applyMods = new List<IStatusApplyModifier>();
+    private static bool _modsDirty = false;
+
+    /// <summary>
+    /// 注册异常施加修饰器（全局）
+    /// </summary>
+    public static void RegisterApplyModifier(IStatusApplyModifier mod)
+    {
+        if (mod == null) return;
+        if (_applyMods.Contains(mod)) return;
+        _applyMods.Add(mod);
+        _modsDirty = true;
+    }
+
+    /// <summary>
+    /// 反注册异常施加修饰器（全局）
+    /// </summary>
+    public static void UnregisterApplyModifier(IStatusApplyModifier mod)
+    {
+        if (mod == null) return;
+        if (_applyMods.Remove(mod))
+            _modsDirty = true;
+    }
+
+    /// <summary>
+    /// 如果修饰器列表有变更，则按优先级排序（从大到小）
+    /// </summary>
+    private static void SortModsIfDirty()
+    {
+        if (!_modsDirty) return;
+        _modsDirty = false;
+        _applyMods.Sort((a, b) => b.Priority.CompareTo(a.Priority));
+    }
+
     [System.Serializable]
     public class StatusDebugEntry
     {
@@ -23,6 +64,7 @@ public class StatusContainer : MonoBehaviour
         public float slowPerStack;
         public float weakenPerStack;
 
+        public float shockChainDamagePerTickPerStack; // 注意：保持兼容（如果你原来没有这个字段可删掉）
         public float shockChainDamagePerStack;
         public float shockChainRadius;
         public int shockMaxChains;
@@ -117,6 +159,17 @@ public class StatusContainer : MonoBehaviour
 
     public void ApplyStatus(StatusApplyRequest req)
     {
+        // =========================
+        // 新增：异常施加修饰器入口
+        // 任何来源只要走 ApplyStatus，都可以在这里统一修改 stacksToAdd 等字段
+        // =========================
+        SortModsIfDirty();
+        for (int i = 0; i < _applyMods.Count; i++)
+        {
+            // 允许修饰器直接改 req（例如 stacksToAdd +1）
+            _applyMods[i].Modify(this, ref req);
+        }
+
         float now = Time.time;
 
         int add = Mathf.Max(1, req.stacksToAdd);

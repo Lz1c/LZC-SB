@@ -179,17 +179,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 59052a946a912fd4f8b5e61515c0ce57, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  entries:
-  - type: 2
-    stacksToAdd: 1
-    duration: 3
-    tickInterval: 0.25
-    burnDamagePerTickPerStack: 1
-    slowPerStack: 1
-    weakenPerStack: 0
-    shockChainDamagePerStack: 0
-    shockChainRadius: 0
-    shockMaxChains: 0
+  entries: []
 --- !u!114 &8517309270557453296
 MonoBehaviour:
   m_ObjectHideFlags: 0
