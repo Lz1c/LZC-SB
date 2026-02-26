@@ -1,206 +1,126 @@
-using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-public sealed class Perk_ExplosiveImpactOnly : GunPerkModifierBase
+public sealed class Perk_ExplosiveImpactOnly : MonoBehaviour
 {
     [Header("Explosion")]
     [Min(0.01f)] public float radius = 3.5f;
     [Min(0f)] public float explosionDamage = 25f;
+
+    [Tooltip("Layers used to find enemies for AoE damage. Avoid ~0 (Everything) in real scenes.")]
     public LayerMask enemyMask = ~0;
+
+    [Tooltip("If true, explosion damage will set DamageFlags.SkipHitEvent to avoid recursive perk procs.")]
     public bool explosionSkipHitEvent = true;
 
     [Header("VFX")]
     public GameObject explosionVfxPrefab;
     public Transform vfxParent;
     [Min(0f)] public float vfxAutoDestroySeconds = 6f;
-    public bool scaleVfxByRadius = true;
-    public bool vfxUseDiameter = true;
-    [Min(0f)] public float vfxScalePerUnit = 0.5f;
+    public bool scaleVfxWithRadius = true;
 
-    [Header("Gun Penalties (GunStatContext)")]
-    [Range(0.05f, 1f)] public float fireRateMultiplier = 0.6f;
-    [Range(0.05f, 1f)] public float bulletSpeedMultiplier = 0.7f;
+    private CameraGunChannel _sourceGun;
+    private bool _reentryGuard;
 
-    [Header("Direct Hit")]
-    public bool cancelDirectDamage = true;
+    private readonly HashSet<int> _dedupe = new HashSet<int>(128);
+    private readonly Collider[] _overlaps = new Collider[128];
 
-    [Header("Priority")]
-    public int priority = 0;
-    public override int Priority => priority;
-
-    [Header("Bind")]
-    [Tooltip("How many frames to wait while trying to find SourceGun after enabling.")]
-    [Min(1)] public int bindRetryFrames = 10;
-
-    private bool _subscribed;
-    private Coroutine _bindRoutine;
+    private void Reset()
+    {
+        int enemy = LayerMask.NameToLayer("Enemy");
+        if (enemy >= 0) enemyMask = 1 << enemy;
+    }
 
     private void OnEnable()
     {
-        base.OnEnable(); // tries to set SourceGun + register to GunStatContext
-
-        // If SourceGun is not ready yet (e.g. enabled before being parented), retry for a few frames.
-        StartBindRoutine();
+        _sourceGun = GetComponentInParent<CameraGunChannel>();
+        CombatEventHub.OnHit += HandleHit;
     }
 
     private void OnDisable()
     {
-        StopBindRoutine();
-        Unsubscribe();
-        base.OnDisable();
+        CombatEventHub.OnHit -= HandleHit;
+        _sourceGun = null;
+        _reentryGuard = false;
+        _dedupe.Clear();
     }
 
-    private void OnDestroy()
+    private void HandleHit(CombatEventHub.HitEvent e)
     {
-        StopBindRoutine();
-        Unsubscribe();
-    }
+        if (_reentryGuard) return;
+        if (_sourceGun == null) return;
 
-    private void OnTransformParentChanged()
-    {
-        // If parent changes (perk moved between guns), rebind.
-        if (isActiveAndEnabled)
-        {
-            // Re-run base.OnEnable-like discovery safely:
-            // (GunPerkModifierBase will update SourceGun on next enable; but here we just retry subscription gate.)
-            StartBindRoutine();
-        }
-    }
+        if (e.source != _sourceGun) return;
+        if ((e.flags & DamageFlags.SkipHitEvent) != 0) return;
 
-    private void StartBindRoutine()
-    {
-        StopBindRoutine();
-        _bindRoutine = StartCoroutine(CoBind());
-    }
-
-    private void StopBindRoutine()
-    {
-        if (_bindRoutine != null)
-        {
-            StopCoroutine(_bindRoutine);
-            _bindRoutine = null;
-        }
-    }
-
-    private IEnumerator CoBind()
-    {
-        // Try immediately + a few frames (covers Instantiate->SetParent timing).
-        for (int i = 0; i < Mathf.Max(1, bindRetryFrames); i++)
-        {
-            if (SourceGun != null)
-            {
-                Subscribe();
-                yield break;
-            }
-
-            // SourceGun might become available next frame after parenting.
-            yield return null;
-
-            // Re-attempt discovery in case the base class cached null during first enable.
-            // (We can just search again here without touching GunStatContext registration.)
-            if (SourceGun == null)
-                TryRefreshSourceGun();
-        }
-
-        // If still no gun, do NOT become global; just stay inactive until properly parented.
-        Unsubscribe();
-    }
-
-    private void TryRefreshSourceGun()
-    {
-        // Minimal refresh: look up gun in parents.
-        // We cannot set GunPerkModifierBase.SourceGun directly (private setter),
-        // so we rely on the fact that in correct usage this perk is enabled under a gun.
-        // In practice, if you're seeing this fail, it means the perk isn't parented under a gun yet.
-        // (No-op here; kept for future extension.)
-    }
-
-    private void Subscribe()
-    {
-        if (_subscribed) return;
-        CombatEventHub.OnHit += OnHit;
-        _subscribed = true;
-    }
-
-    private void Unsubscribe()
-    {
-        if (!_subscribed) return;
-        CombatEventHub.OnHit -= OnHit;
-        _subscribed = false;
-    }
-
-    public override void ApplyModifiers(CameraGunChannel source, Dictionary<GunStat, StatStack> stacks)
-    {
-        if (source == null || stacks == null) return;
-
-        if (stacks.TryGetValue(GunStat.FireRate, out var fr))
-        {
-            fr.mul *= Mathf.Max(0.0001f, fireRateMultiplier);
-            stacks[GunStat.FireRate] = fr;
-        }
-
-        if (stacks.TryGetValue(GunStat.BulletSpeed, out var bs))
-        {
-            bs.mul *= Mathf.Max(0.0001f, bulletSpeedMultiplier);
-            stacks[GunStat.BulletSpeed] = bs;
-        }
-
-        if (cancelDirectDamage && stacks.TryGetValue(GunStat.Damage, out var dmg))
-        {
-            dmg.mul *= 0f;
-            stacks[GunStat.Damage] = dmg;
-        }
-    }
-
-    private void OnHit(CombatEventHub.HitEvent e)
-    {
-        if (!isActiveAndEnabled) return;
-        if (e.source == null) return;
-
-        // Critical: never global.
-        if (SourceGun == null) return;
-        if (e.source != SourceGun) return;
-
-        if (explosionSkipHitEvent && (e.flags & DamageFlags.SkipHitEvent) != 0) return;
+        Collider hitCol = e.hitCollider;
+        if (hitCol == null) return;
 
         Vector3 center = e.hitPoint;
 
+        // VFX
         if (explosionVfxPrefab != null)
         {
             Transform parent = vfxParent != null ? vfxParent : null;
-            GameObject vfx = parent != null
-                ? Instantiate(explosionVfxPrefab, center, Quaternion.identity, parent)
-                : Instantiate(explosionVfxPrefab, center, Quaternion.identity);
-
-            if (scaleVfxByRadius)
-            {
-                float units = vfxUseDiameter ? (radius * 2f) : radius;
-                float s = Mathf.Max(0f, units * vfxScalePerUnit);
-                vfx.transform.localScale = vfx.transform.localScale * s;
-            }
-
-            if (vfxAutoDestroySeconds > 0f)
-                Destroy(vfx, vfxAutoDestroySeconds);
+            GameObject vfx = Instantiate(explosionVfxPrefab, center, Quaternion.identity, parent);
+            if (scaleVfxWithRadius) vfx.transform.localScale *= Mathf.Max(0.001f, radius);
+            if (vfxAutoDestroySeconds > 0f) Destroy(vfx, vfxAutoDestroySeconds);
         }
 
-        Collider[] cols = Physics.OverlapSphere(center, Mathf.Max(0.01f, radius), enemyMask, QueryTriggerInteraction.Collide);
-        if (cols == null || cols.Length == 0) return;
+        _dedupe.Clear();
 
-        DamageFlags flags = explosionSkipHitEvent ? DamageFlags.SkipHitEvent : DamageFlags.None;
+        int count = Physics.OverlapSphereNonAlloc(center, radius, _overlaps, enemyMask, QueryTriggerInteraction.Ignore);
+        if (count <= 0) return;
 
-        for (int i = 0; i < cols.Length; i++)
+        _reentryGuard = true;
+        try
         {
-            Collider col = cols[i];
-            if (col == null) continue;
-
-            var info = new DamageInfo
+            for (int i = 0; i < count; i++)
             {
-                damage = Mathf.Max(0f, explosionDamage),
-                flags = flags
-            };
+                Collider c = _overlaps[i];
+                if (c == null) continue;
 
-            DamageResolver.ApplyHit(info, col, col.ClosestPoint(center), e.source, null, null, true);
+                int targetId;
+                var mh = c.GetComponentInParent<MonsterHealth>();
+                if (mh != null)
+                {
+                    targetId = mh.gameObject.GetInstanceID();
+                }
+                else
+                {
+                    var dmg = c.GetComponentInParent<IDamageableEx>();
+                    if (dmg == null) continue;
+
+                    var comp = dmg as Component;
+                    targetId = comp != null
+                        ? comp.gameObject.GetInstanceID()
+                        : c.transform.root.gameObject.GetInstanceID();
+                }
+
+                if (!_dedupe.Add(targetId)) continue;
+
+                DamageInfo info = default;
+                info.source = _sourceGun;
+                info.damage = explosionDamage;
+                info.hitPoint = center;
+                info.hitCollider = c;
+
+                if (explosionSkipHitEvent) info.flags |= DamageFlags.SkipHitEvent;
+
+                DamageResolver.ApplyHit(
+                    info,
+                    c,
+                    center,
+                    _sourceGun,
+                    armorPayload: null,
+                    statusPayload: null,
+                    showHitUI: false
+                );
+            }
+        }
+        finally
+        {
+            _reentryGuard = false;
         }
     }
 }
